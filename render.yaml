@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: brutal-bomber-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python brutal_bomber_api.py
