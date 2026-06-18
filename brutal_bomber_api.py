@@ -1,7 +1,7 @@
 # ============================================
 # brutal_bomber_api.py
 # 3 APIs (Ultra + Part1 + Part2) + Key System
-# Render Deploy Ready — Pure API
+# Fixed for Render — Python 3.10 compatible
 # ============================================
 
 from flask import Flask, request, jsonify
@@ -15,12 +15,11 @@ from threading import Lock
 app = Flask(__name__)
 
 # ====== KEY SYSTEM ======
-DEFAULT_KEY = "admin123"  # Default master key
-keys_db = {}  # {key: {"created": timestamp, "expires": timestamp, "active": True}}
+DEFAULT_KEY = "admin123"
+keys_db = {}
 
 def generate_key(duration_hours=24):
-    """Generate a unique random key"""
-    key = secrets.token_hex(16)  # 32 character hex
+    key = secrets.token_hex(16)
     created = datetime.now()
     expires = created + timedelta(hours=duration_hours)
     keys_db[key] = {
@@ -31,7 +30,6 @@ def generate_key(duration_hours=24):
     return key
 
 def validate_key(key):
-    """Check if key is valid"""
     if key == DEFAULT_KEY:
         return True
     if key not in keys_db:
@@ -45,7 +43,6 @@ def validate_key(key):
     return True
 
 def expire_key(key):
-    """Expire a key"""
     if key in keys_db:
         keys_db[key]["active"] = False
         return True
@@ -149,7 +146,6 @@ def home():
 
 @app.route('/bomb', methods=['GET', 'POST'])
 def bomb():
-    """Bombing endpoint — requires valid key"""
     if request.method == 'GET':
         phone = request.args.get('phone')
         key = request.args.get('key')
@@ -162,20 +158,16 @@ def bomb():
         threads = data.get('threads', 50)
         delay = data.get('delay', 0.005)
     
-    # Validate key
     if not key or not validate_key(key):
         return jsonify({"status": "error", "message": "Invalid or expired key"}), 401
     
-    # Validate phone
     if not phone or len(phone) != 10 or not phone.isdigit():
         return jsonify({"status": "error", "message": "Phone number must be 10 digits"}), 400
     
-    # Start bombing
     bomber = BrutalBomber(phone, threads, delay)
     bomber_id = f"{phone}_{int(time.time())}"
     active_bombers[bomber_id] = bomber
     
-    # Run in background
     import threading
     def run_bomb():
         result = bomber.start()
@@ -195,7 +187,6 @@ def bomb():
 
 @app.route('/stop', methods=['GET', 'POST'])
 def stop():
-    """Stop bombing by bomber_id"""
     if request.method == 'GET':
         bomber_id = request.args.get('bomber_id')
     else:
@@ -214,12 +205,10 @@ def stop():
 
 @app.route('/keygen', methods=['POST'])
 def keygen():
-    """Generate a new API key — requires admin key"""
     data = request.get_json() or {}
     admin_key = data.get('admin_key')
     duration = int(data.get('duration', 24))
     
-    # Validate admin key
     if admin_key != DEFAULT_KEY:
         return jsonify({"status": "error", "message": "Invalid admin key"}), 401
     
@@ -233,7 +222,6 @@ def keygen():
 
 @app.route('/key/expire', methods=['POST'])
 def expire():
-    """Expire a key — requires admin key"""
     data = request.get_json() or {}
     admin_key = data.get('admin_key')
     key_to_expire = data.get('key')
@@ -251,7 +239,6 @@ def expire():
 
 @app.route('/keys', methods=['POST'])
 def list_keys():
-    """List all keys — requires admin key"""
     data = request.get_json() or {}
     admin_key = data.get('admin_key')
     
