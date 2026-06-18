@@ -3,6 +3,7 @@ import requests
 import time
 import secrets
 import threading
+import os  # <--- IMPORTANT
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -150,5 +151,7 @@ def keygen():
 def health():
     return jsonify({"status": "healthy", "apis": len(THREE_APIS), "keys": len(keys_db)})
 
+# ====== MAIN ======
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))  # <--- FIXED
+    app.run(host='0.0.0.0', port=port)
