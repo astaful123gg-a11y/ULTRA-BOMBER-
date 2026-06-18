@@ -2,5 +2,5 @@ services:
   - type: web
     name: brutal-bomber-api
     env: python
-    buildCommand: pip install --no-cache-dir --default-timeout=100 flask requests
+    buildCommand: pip install flask requests
     startCommand: python brutal_bomber_api.py
