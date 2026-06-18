@@ -1,6 +1,6 @@
 services:
   - type: web
     name: brutal-bomber-api
-    env: python
-    buildCommand: pip install flask requests
-    startCommand: python brutal_bomber_api.py
+    runtime: image
+    buildCommand: docker build -t brutal-bomber-api .
+    startCommand: docker run -p 5000:5000 brutal-bomber-api
